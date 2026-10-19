@@ -1,6 +1,9 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import path from "path";
+import fs from "fs/promises";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -71,7 +74,6 @@ export async function gantiPassword(prevState, formData) {
 
   const supabase = await createAdminClient();
 
-  // Memastikan admin sedang login
   try {
     await periksaAdmin(supabase);
   } catch (err) {
@@ -104,3 +106,120 @@ export async function gantiPassword(prevState, formData) {
   return { success: "Password berhasil diganti." };
 }
 
+/**
+ * Helper untuk memproses file upload foto ke public/produk
+ */
+async function prosesUploadFoto(fotoFile, existingFotoUrl) {
+  let fotoUrl = existingFotoUrl || "";
+
+  if (fotoFile && typeof fotoFile === "object" && fotoFile.size > 0 && fotoFile.name) {
+    const bytes = await fotoFile.arrayBuffer();
+    const buffer = Buffer.from(bytes);
+    const ext = path.extname(fotoFile.name) || ".webp";
+    const sanitizedBase = path.basename(fotoFile.name, ext).replace(/[^a-zA-Z0-9_-]/g, "_");
+    const safeName = `${Date.now()}-${sanitizedBase}${ext}`;
+    const uploadDir = path.join(process.cwd(), "public", "produk");
+    await fs.mkdir(uploadDir, { recursive: true });
+    await fs.writeFile(path.join(uploadDir, safeName), buffer);
+    fotoUrl = `/produk/${safeName}`;
+  }
+
+  return fotoUrl;
+}
+
+/**
+ * Server Action untuk menambah produk baru ke database.
+ */
+export async function tambahProduk(formData) {
+  const supabase = await createAdminClient();
+  await periksaAdmin(supabase);
+
+  const nama = formData.get("nama")?.toString().trim();
+  const harga = parseInt(formData.get("harga")?.toString() || "0", 10);
+  const kategori = formData.get("kategori")?.toString().trim() || "";
+  const deskripsi = formData.get("deskripsi")?.toString().trim() || "";
+  const fotoFile = formData.get("foto_file");
+  const inputFotoUrl = formData.get("foto_url")?.toString().trim() || "";
+
+  const foto_url = await prosesUploadFoto(fotoFile, inputFotoUrl);
+
+  const { error } = await supabase.from("produk").insert({
+    nama,
+    harga,
+    kategori,
+    deskripsi,
+    foto_url,
+  });
+
+  if (error) {
+    throw new Error(`Gagal menambah produk: ${error.message}`);
+  }
+
+  revalidatePath("/");
+  revalidatePath("/admin");
+  redirect("/admin");
+}
+
+/**
+ * Server Action untuk mengubah produk di database.
+ */
+export async function ubahProduk(formData) {
+  const supabase = await createAdminClient();
+  await periksaAdmin(supabase);
+
+  const id = formData.get("id");
+  if (!id) {
+    throw new Error("ID produk tidak valid.");
+  }
+
+  const nama = formData.get("nama")?.toString().trim();
+  const harga = parseInt(formData.get("harga")?.toString() || "0", 10);
+  const kategori = formData.get("kategori")?.toString().trim() || "";
+  const deskripsi = formData.get("deskripsi")?.toString().trim() || "";
+  const fotoFile = formData.get("foto_file");
+  const inputFotoUrl = formData.get("foto_url")?.toString().trim() || "";
+
+  const foto_url = await prosesUploadFoto(fotoFile, inputFotoUrl);
+
+  const { error } = await supabase
+    .from("produk")
+    .update({
+      nama,
+      harga,
+      kategori,
+      deskripsi,
+      foto_url,
+    })
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(`Gagal mengubah produk: ${error.message}`);
+  }
+
+  revalidatePath("/");
+  revalidatePath("/admin");
+  revalidatePath(`/produk/${id}`);
+  redirect("/admin");
+}
+
+/**
+ * Server Action untuk menghapus produk dari database.
+ */
+export async function hapusProduk(formData) {
+  const supabase = await createAdminClient();
+  await periksaAdmin(supabase);
+
+  const id = formData.get("id");
+  if (!id) {
+    throw new Error("ID produk tidak valid.");
+  }
+
+  const { error } = await supabase.from("produk").delete().eq("id", id);
+
+  if (error) {
+    throw new Error(`Gagal menghapus produk: ${error.message}`);
+  }
+
+  revalidatePath("/");
+  revalidatePath("/admin");
+}
